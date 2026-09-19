@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime & Temporary files
+*.log
+*.pid
+flist.txt
+metadata.txt
+audiobook_studio_*/
+
+# Audio & Media artifacts
+*.mp3
+*.m4a
+*.m4b
+*.m4u
+*.wav
+*.pdf
+*.epub

@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kokoro-audiobook-studio"
+version = "1.0.0"
+description = "High-speed Apple Silicon Metal GPU Audiobook Studio (EPUB/PDF -> M4B)"
+readme = "README.md"
+authors = [{ name = "SK" }]
+license = { text = "MIT" }
+requires-python = ">=3.10,<3.13"
+keywords = ["audiobook", "tts", "kokoro", "apple-silicon", "metal", "m4b", "epub", "pdf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "torch>=2.2.0",
+    "kokoro>=0.8.4",
+    "soundfile>=0.12.1",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "pymupdf>=1.24.0",
+    "rich>=13.7.0",
+    "lameenc>=1.7.0",
+    "ebooklib>=0.18",
+]
+
+[project.scripts]
+audiobook-studio = "audiobook_studio.app:main"
+make_audiobook = "audiobook_studio.app:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.urls]
+Homepage = "https://github.com/S-k404/kokoro-audiobook-studio"
+Repository = "https://github.com/S-k404/kokoro-audiobook-studio.git"
+Issues = "https://github.com/S-k404/kokoro-audiobook-studio/issues"
+Changelog = "https://github.com/S-k404/kokoro-audiobook-studio/blob/main/CHANGELOG.md"
