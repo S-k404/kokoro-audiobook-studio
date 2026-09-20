@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-20
+
 ### Added
 - Installer prompts and safeguards: offers to install Python/ffmpeg (Homebrew or apt),
   Homebrew itself (explicit consent only), warns on unsupported platforms, low disk space,

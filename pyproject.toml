@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kokoro-audiobook-studio"
-version = "1.0.0"
+version = "1.1.0"
 description = "High-speed Apple Silicon Metal GPU Audiobook Studio (EPUB/PDF -> M4B)"
 readme = "README.md"
 authors = [{ name = "SK" }]
