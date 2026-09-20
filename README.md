@@ -24,16 +24,16 @@ Most text-to-speech tools read a PDF exactly as printed, so you hear "Page 214" 
 
 | | |
 |---|---|
-| Computer | Mac with Apple Silicon (M1 or newer) recommended. Intel Macs and Linux work but run on the CPU, which is much slower. |
+| Computer | Mac with Apple Silicon (M1 or newer) recommended. Linux runs on CPU/CUDA and Intel Macs are untested; both are much slower and treated as experimental. |
 | Python | **3.10, 3.11 or 3.12.** Python 3.13+ is not supported by Kokoro yet. |
-| ffmpeg | Needed to build the `.m4b` (`brew install ffmpeg`). |
+| ffmpeg | Needed to build the `.m4b`. The installer can install it for you (Homebrew on macOS, apt on Debian/Ubuntu). |
 | Disk / network | About 2 GB for PyTorch, plus a ~330 MB voice model downloaded from Hugging Face the first time you convert a book. |
 
-Check your Python version with `python3 --version`. If it is 3.13 or newer, run `brew install python@3.12` first.
+You do not have to prepare any of this by hand: the installer checks each requirement, tells you what is missing, and asks before installing anything.
 
 ## Install
 
-### Option 1: install script
+### Option 1: install script (recommended)
 
 ```bash
 git clone https://github.com/S-k404/kokoro-audiobook-studio.git
@@ -41,7 +41,16 @@ cd kokoro-audiobook-studio
 ./install.sh
 ```
 
-The script finds a supported Python, creates its own environment in `~/.kokoro-audiobook-studio`, installs everything, and puts `audiobook-studio` in `~/.local/bin`. It asks before installing ffmpeg. If it prints a PATH tip, follow it, then open a new terminal.
+The installer checks your system and **asks before changing anything**:
+
+* finds Python 3.10-3.12 and ffmpeg, and offers to install them if they are missing (with Homebrew on macOS, or apt on Debian/Ubuntu; it can also offer to install Homebrew itself, only if you say yes)
+* warns you on Intel Macs and Linux, and when disk space is low, the internet is unreachable, or the install folder path is too long
+* installs into its own environment at `~/.kokoro-audiobook-studio` using tested version pins from `constraints.txt`, so it does not touch your other Python projects
+* adds `audiobook-studio` to `~/.local/bin` without overwriting any command that already exists there
+* offers to download the ~330 MB voice model right away, so your first conversion does not stall
+* finishes with a self-check (`audiobook-studio --doctor`) that shows exactly what works
+
+Use `./install.sh --yes` to accept the default answers without prompts. If a step fails, the installer stops with a message saying what to do; see Troubleshooting.
 
 ### Option 2: manual install
 
@@ -51,11 +60,12 @@ git clone https://github.com/S-k404/kokoro-audiobook-studio.git
 cd kokoro-audiobook-studio
 python3.12 -m venv .venv          # any of 3.10, 3.11, 3.12
 source .venv/bin/activate
-pip install .
-audiobook-studio --help
+pip install -c constraints.txt .
+audiobook-studio --download-model # optional: fetch the voice model now (~330 MB)
+audiobook-studio --doctor         # verify the setup
 ```
 
-Keep the location of your environment on a **short path**. Very long paths can break the phonemizer (see Troubleshooting).
+Keep your environment in a **short folder path**: the speech engine fails to start when its data folder is more than about 130 characters deep (see Troubleshooting).
 
 ## Quick start
 
@@ -66,6 +76,8 @@ audiobook-studio
 ```
 
 A wizard lists your books, then asks for the output folder, narrator voice and speed. Finished audiobooks go to `~/Documents/AudioBook` by default.
+
+Before generating anything, the app shows the detected chapters and asks you to confirm. It warns you if no chapters were detected (the book is then split into evenly sized sections) or if the PDF looks scanned. Use `--yes` to skip the question.
 
 Try a dry run first to see how a book will be split into chapters, without generating any audio:
 
@@ -87,6 +99,9 @@ audiobook-studio 3 -o ~/Audio          # custom output folder
 audiobook-studio --all                 # convert every book not yet converted
 audiobook-studio --list                # show your library
 audiobook-studio --voices              # show the voice list
+audiobook-studio --doctor              # check that everything needed works
+audiobook-studio --download-model      # download the voice model now
+audiobook-studio 3 --yes               # skip the confirmation question
 ```
 
 `make_audiobook` is an alias for `audiobook-studio`.
@@ -144,6 +159,12 @@ Choose voice [1-10 or type name] (1): 1
 **`No matching distribution found for kokoro` or `requires a different Python`**
 You are using Python 3.13 or newer. Install 3.12 (`brew install python@3.12`) and re-run `./install.sh`, which picks a supported version automatically.
 
+**First, run the self-check**
+```bash
+audiobook-studio --doctor
+```
+It lists what works and what does not (Python, ffmpeg, GPU, speech engine, voice model, output folder, port) and says how to fix each problem.
+
 **`command not found: audiobook-studio`**
 `~/.local/bin` is not on your PATH. Run this, then open a new terminal:
 ```bash
@@ -169,7 +190,13 @@ KOKORO_PORT=8011 KOKORO_ENDPOINT=http://127.0.0.1:8011/v1 audiobook-studio
 ```
 
 **Log says `Error processing file ... espeak-ng-data/phontab`**
-The environment is installed in a folder with a very long path, which the bundled phonemizer cannot handle. Reinstall in a shorter location, for example `~/.kokoro-audiobook-studio` (what `install.sh` uses).
+The environment is installed in a folder with a very long path (the speech engine's data folder must be under about 130 characters deep). Reinstall in a shorter location, for example `~/.kokoro-audiobook-studio` (what `install.sh` uses).
+
+**The first conversion seems stuck**
+The voice model (~330 MB) is downloaded the first time it is needed. Run `audiobook-studio --download-model` to fetch it with visible progress, and check your internet connection or proxy. Partial downloads resume.
+
+**Installation fails with network or pip errors**
+Check your internet connection, VPN or proxy (`HTTPS_PROXY`), and that you have about 4 GB free. The installer offers to retry without the pinned versions; only accept that if the pinned install fails, since newer versions are untested.
 
 **"No readable text found"**
 The PDF is probably scanned images. Run it through an OCR tool first (for example `ocrmypdf`), then convert the result.
@@ -183,8 +210,8 @@ The speech server failed part-way through a chapter. The app stops rather than p
 **It is slow**
 On an Intel Mac or Linux there is no Metal GPU, so synthesis runs on the CPU (or CUDA if available). Apple Silicon is where this project is fast.
 
-**Chapter names look wrong**
-Run with `--dry-run` to preview the detected chapters. PDFs without an outline or clear headings fall back to evenly sized sections.
+**Chapter names look wrong, or there are too few chapters**
+Run with `--dry-run` to preview the detected chapters (the app also shows them and asks before it starts). PDFs without an outline or clear headings fall back to evenly sized sections; adding bookmarks to the PDF, or converting from an EPUB, gives better chapters.
 
 ## Optional: double-clickable launcher
 

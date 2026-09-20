@@ -1,0 +1,7 @@
+# Tested combination of the speech stack. install.sh installs with `-c constraints.txt`
+# so a future release of one of these cannot silently break a fresh install.
+# Update together, and re-test a real conversion, when moving to newer versions.
+kokoro==0.9.4
+misaki==0.9.4
+espeakng-loader==0.2.4
+phonemizer-fork==3.3.2

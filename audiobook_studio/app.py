@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import signal
 import subprocess
 import sys
@@ -45,7 +46,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
@@ -195,6 +196,110 @@ def ensure_kokoro_server():
 
     console.print(f"[red]❌ Server failed to start on port {KOKORO_PORT}. Check {log_path}[/red]")
     return False
+
+
+# ---------------------------------------------------------------------------
+# Environment self-check and model download
+# ---------------------------------------------------------------------------
+MODEL_REPO = "hexgrad/Kokoro-82M"
+
+
+def download_model() -> bool:
+    """Pre-download the Kokoro weights and curated voices so first use is not a silent wait."""
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        console.print("[red]❌ huggingface_hub is not installed.[/red]")
+        return False
+    files = ["config.json", "kokoro-v1_0.pth"] + [f"voices/{code}.pt" for code, *_ in VOICE_CATALOG]
+    console.print(f"[cyan]Downloading Kokoro model from Hugging Face ({MODEL_REPO}, ~330 MB)...[/cyan]")
+    try:
+        for name in files:
+            hf_hub_download(MODEL_REPO, name)
+    except Exception as exc:
+        console.print(f"[red]❌ Model download failed: {exc}[/red]")
+        console.print("[dim]Check your internet connection or proxy. Re-run 'audiobook-studio --download-model' to retry; "
+                      "partial downloads resume.[/dim]")
+        return False
+    console.print("[green]✅ Model downloaded and cached.[/green]")
+    return True
+
+
+def run_doctor() -> bool:
+    """Check the environment and print a pass/warn/fail table. Returns False if anything fatal is wrong."""
+    rows, fatal = [], False
+
+    def add(name, status, detail):
+        nonlocal fatal
+        rows.append((name, {"ok": "[green]OK[/green]", "warn": "[yellow]WARN[/yellow]", "fail": "[red]FAIL[/red]"}[status], detail))
+        fatal = fatal or status == "fail"
+
+    v = sys.version_info
+    add("Python", "ok" if (3, 10) <= v[:2] < (3, 13) else "fail",
+        f"{v.major}.{v.minor}.{v.micro}" + ("" if (3, 10) <= v[:2] < (3, 13) else " (need 3.10-3.12)"))
+
+    for tool in ("ffmpeg", "ffprobe"):
+        path = shutil.which(tool)
+        add(tool, "ok" if path else "fail", path or "not found (macOS: brew install ffmpeg | Debian/Ubuntu: sudo apt install ffmpeg)")
+
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            add("Compute device", "ok", "Apple Metal GPU (MPS)")
+        elif torch.cuda.is_available():
+            add("Compute device", "ok", "NVIDIA CUDA GPU")
+        else:
+            add("Compute device", "warn", "CPU only; conversion will be much slower")
+    except Exception as exc:
+        add("PyTorch", "fail", f"cannot import: {exc}")
+
+    probe = subprocess.run(
+        [sys.executable, "-c", "from misaki import espeak; espeak.EspeakFallback(False)"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode == 0 and "Error processing" not in (probe.stdout + probe.stderr):
+        add("Phonemizer (espeak-ng)", "ok", "working")
+    else:
+        add("Phonemizer (espeak-ng)", "fail",
+            "failed to start. Very long install paths cause this; reinstall in a shorter folder "
+            "(e.g. ~/.kokoro-audiobook-studio)")
+
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        cached = isinstance(try_to_load_from_cache(MODEL_REPO, "kokoro-v1_0.pth"), str)
+    except Exception:
+        cached = False
+    add("Voice model", "ok" if cached else "warn",
+        "cached" if cached else "not downloaded yet; run 'audiobook-studio --download-model' (~330 MB)")
+
+    try:
+        DEFAULT_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        free_gb = shutil.disk_usage(DEFAULT_AUDIO_DIR).free / 1e9
+        add("Output folder", "ok" if free_gb >= 2 else "warn", f"{DEFAULT_AUDIO_DIR} ({free_gb:.0f} GB free)")
+    except Exception as exc:
+        add("Output folder", "fail", f"{DEFAULT_AUDIO_DIR}: {exc}")
+
+    if is_server_running():
+        add("Port", "ok", f"{KOKORO_PORT}: a Kokoro server is already running and will be reused")
+    else:
+        try:
+            with socket.socket() as sock:
+                sock.bind((KOKORO_HOST, KOKORO_PORT))
+            add("Port", "ok", f"{KOKORO_PORT} is free")
+        except OSError:
+            add("Port", "warn", f"{KOKORO_PORT} is used by another program; set KOKORO_PORT to another number")
+
+    table = Table(box=ROUNDED, border_style="bright_blue", show_header=True, header_style="bold cyan")
+    table.add_column("Check")
+    table.add_column("Result", justify="center")
+    table.add_column("Details")
+    for row in rows:
+        table.add_row(*row)
+    console.print(table)
+    console.print("[bold red]Problems found; fix the FAIL items above.[/bold red]" if fatal
+                  else "[bold green]Everything needed is in place.[/bold green]")
+    return not fatal
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +513,7 @@ def synthesize_book_with_dashboard(
     audio_format: str,
     concurrency: int = 4,
     dry_run: bool = False,
+    confirm: bool = False,
 ):
     is_epub = book_path.suffix.lower() == ".epub"
     clean_stem = conv.clean_book_stem(book_path.stem)
@@ -458,10 +564,13 @@ def synthesize_book_with_dashboard(
             console.print("[red]❌ No readable text found. If this is a scanned PDF, run OCR first.[/red]")
             return False
 
+        chapter_source = "outline"
         sections = conv.sections_from_outline(doc, paras, 0, doc.page_count - 1)
         if not sections:
+            chapter_source = "headings"
             sections = conv.sections_from_headings(paras, min_words=80)
         if not sections:
+            chapter_source = "fixed"
             sections = [conv.Section(f"Section {i}", c) for i, c in enumerate(conv.chunk([p.text for p in paras], 6000), 1)]
 
         # Drop empty sections
@@ -480,6 +589,18 @@ def synthesize_book_with_dashboard(
             conv.write_epub(sections, epub_dest, title, author, lang="en")
         console.print(f"[green]✓ Step 1 Complete:[/green] Saved clean EPUB -> [white]{epub_dest}[/white]")
 
+    # Sanity warnings: things that usually mean the result will not be what the user expects.
+    warnings = []
+    if chapter_source == "fixed":
+        warnings.append("No chapter outline or headings were found; the book was split into evenly sized sections.")
+    if not is_epub and doc.page_count and total_words / doc.page_count < 40:
+        warnings.append(
+            f"Only ~{total_words / doc.page_count:.0f} words per page were found. Many pages may be scanned "
+            "images (run OCR first) or mostly figures."
+        )
+    for w in warnings:
+        console.print(f"[yellow]⚠️  {w}[/yellow]")
+
     if dry_run:
         console.print(f"\n[bold cyan]🔍 Dry Run Summary:[/bold cyan] {len(sections)} sections identified, {total_words:,} words, estimated audio: ~{est_hours:.1f} hours.")
         for idx, s in enumerate(sections[:8], 1):
@@ -489,6 +610,27 @@ def synthesize_book_with_dashboard(
             console.print(f"   [dim]... and {len(sections) - 8} more chapters[/dim]")
         console.print("\n[bold green]✓ Dry-run completed successfully.[/bold green]\n")
         return True
+
+    if confirm:
+        console.print(
+            f"\n[bold]Ready:[/bold] {len(sections)} chapters, ~{total_words:,} words, ~{est_hours:.1f} h of audio "
+            f"(roughly {max(est_hours * 60 / 10, 1):.0f} min to generate on Apple Silicon; much longer on CPU)."
+        )
+        for idx, sec in enumerate(sections[:8], 1):
+            console.print(f"   [yellow]{idx:2d}.[/yellow] {sec.title}")
+        if len(sections) > 8:
+            console.print(f"   [dim]... and {len(sections) - 8} more[/dim]")
+        try:
+            proceed = Confirm.ask("[bold green]Proceed with synthesis?[/bold green]", default=not warnings)
+        except (EOFError, KeyboardInterrupt):
+            proceed = False
+        if not proceed:
+            console.print("\n[cyan]Cancelled. Nothing was generated.[/cyan]")
+            return False
+
+    if not ensure_kokoro_server():
+        console.print("[red]❌ Could not start the Kokoro speech server.[/red]")
+        return False
 
     # 2. Setup Rich Live Progress Panel
     console.print(f"\n[bold cyan]🎧 Starting Kokoro Metal GPU Synthesis ({len(sections)} chapters, ~{total_words:,} words, ~{est_hours:.1f}h audio)[/bold cyan]")
@@ -716,7 +858,15 @@ def main():
     parser.add_argument("--list", action="store_true", help="List available books")
     parser.add_argument("--all", action="store_true", help="Batch convert all pending books")
     parser.add_argument("--dry-run", action="store_true", help="Analyze document structure without TTS synthesis")
+    parser.add_argument("-y", "--yes", action="store_true", help="Do not ask for confirmation before synthesis")
+    parser.add_argument("--doctor", action="store_true", help="Check that everything needed is installed and working")
+    parser.add_argument("--download-model", action="store_true", help="Download the Kokoro model now (~330 MB)")
     args = parser.parse_args()
+
+    if args.doctor:
+        sys.exit(0 if run_doctor() else 1)
+    if args.download_model:
+        sys.exit(0 if download_model() else 1)
 
     books_dir = args.books_dir.expanduser().resolve()
     audio_dir = (args.output or DEFAULT_AUDIO_DIR).expanduser().resolve()
@@ -801,11 +951,6 @@ def main():
         # Ask for speed & format
         selected_speed, selected_format = select_audio_settings(selected_speed, selected_format)
 
-    # 4. Ensure Kokoro GPU server is online (skip if dry-run)
-    if not args.dry_run:
-        if not ensure_kokoro_server():
-            sys.exit("Could not connect to Kokoro GPU server.")
-
     # 5. Process selection
     if target_item == "all":
         pending = [b for b in library if not b.ready_file]
@@ -830,6 +975,7 @@ def main():
             speed=selected_speed,
             audio_format=selected_format,
             dry_run=args.dry_run,
+            confirm=sys.stdin.isatty() and not args.yes,
         )
     elif isinstance(target_item, Path):
         synthesize_book_with_dashboard(
@@ -839,6 +985,7 @@ def main():
             speed=selected_speed,
             audio_format=selected_format,
             dry_run=args.dry_run,
+            confirm=sys.stdin.isatty() and not args.yes,
         )
 
 

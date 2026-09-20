@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Installer prompts and safeguards: offers to install Python/ffmpeg (Homebrew or apt),
+  Homebrew itself (explicit consent only), warns on unsupported platforms, low disk space,
+  no network and too-long install paths, never overwrites existing commands, and offers to
+  pre-download the model.
+- `audiobook-studio --doctor` self-check, `--download-model`, and `--yes`.
+- Confirmation step with chapter preview, plus warnings for books without detectable
+  chapters or with little extractable text (likely scanned).
+- `constraints.txt` with tested versions of the speech stack.
 - Unit tests and a GitHub Actions workflow.
 - Contributing guide, security policy and issue templates.
 
