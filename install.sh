@@ -51,15 +51,23 @@ echo "📦 Creating virtual environment in $INSTALL_DIR/venv ..."
 echo "📦 Installing PyTorch, Kokoro and dependencies (this can take a few minutes)..."
 "$INSTALL_DIR/venv/bin/pip" install "$SRC_DIR"
 
-# Expose the CLI on PATH via ~/.local/bin
+# Expose the CLI on PATH via ~/.local/bin. Never overwrite anything that is not
+# already a link to this installation (e.g. an older script of the same name).
 mkdir -p "$HOME/.local/bin"
+SKIPPED=0
 for cmd in audiobook-studio make_audiobook; do
     target="$HOME/.local/bin/$cmd"
-    if [[ -e "$target" && ! -L "$target" ]]; then
-        echo "⚠️  $target exists and is not a symlink — leaving it alone."
+    want="$INSTALL_DIR/venv/bin/$cmd"
+    if [[ -L "$target" && "$(readlink "$target")" == "$want" ]]; then
+        :  # our own link from a previous install; nothing to do
+    elif [[ -e "$target" || -L "$target" ]]; then
+        echo "⚠️  $target already exists — leaving it untouched."
+        echo "   Run this tool with: $want"
+        SKIPPED=1
         continue
+    else
+        ln -s "$want" "$target"
     fi
-    ln -sf "$INSTALL_DIR/venv/bin/$cmd" "$target"
 done
 
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
@@ -69,6 +77,11 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 fi
 
 echo ""
-echo "🎉 Done. Run 'audiobook-studio' in a new terminal."
+if [[ "$SKIPPED" == "1" ]]; then
+    echo "🎉 Installed, but some commands were not linked (see warnings above)."
+    echo "   Use the full paths shown, or remove the existing files and re-run ./install.sh."
+else
+    echo "🎉 Done. Run 'audiobook-studio' in a new terminal."
+fi
 echo "   The first synthesis downloads the Kokoro model (~330 MB) from Hugging Face."
 echo ""
