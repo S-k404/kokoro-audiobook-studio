@@ -847,6 +847,7 @@ def synthesize_book_with_dashboard(
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Audiobook Studio App (Apple Metal GPU)")
+    parser.add_argument("-V", "--version", action="version", version="audiobook-studio 1.1.0")
     parser.add_argument("target", nargs="?", default=None, help="Book number, title, or path")
     parser.add_argument("voice_tag", nargs="?", default=None, help="Optional voice tag at end (e.g. adam, bella, george)")
     parser.add_argument("-v", "--voice", default=None, help="Voice code or alias")
