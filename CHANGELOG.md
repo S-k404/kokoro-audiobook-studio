@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `-V` / `--version` flag.
+- `run.sh`, a convenience launcher that works whether the project was set up with
+  `install.sh`, `uv`, or a local `.venv`.
+- `uv.lock` for a reproducible install with [uv](https://docs.astral.sh/uv/).
+
 ## [1.1.0] - 2026-09-20
 
 ### Added
@@ -20,7 +26,15 @@ All notable changes to this project are documented here. The format follows
 - Unit tests and a GitHub Actions workflow.
 - Contributing guide, security policy and issue templates.
 
-## [1.0.0]
+### Fixed
+- The speech server no longer starts until synthesis is confirmed.
+- Cancelling the confirmation prompt with EOF (e.g. piped input) no longer crashes
+  with a traceback.
+- Chapter-detection warnings now show in `--dry-run`, not only during synthesis.
+- Corrected guidance on the phonemizer's path-length limit: it fails with an install
+  path of roughly 130+ characters to its data folder, not merely "very long" ones.
+
+## [1.0.0] - 2026-09-19
 
 ### Added
 - PDF and EPUB to chaptered `.m4b` / `.mp3` audiobook conversion with Kokoro-82M.
