@@ -75,7 +75,21 @@ Put your books in `~/Documents/Books` (or pass any path), then run:
 audiobook-studio
 ```
 
-A wizard lists your books, then asks for the output folder, narrator voice and speed. Finished audiobooks go to `~/Documents/AudioBook` by default.
+This opens an interactive menu that stays open until you quit:
+
+```text
+1  Convert a book
+2  Convert all pending books (3 waiting)
+3  Library
+4  Settings
+5  Health check
+6  Download voice model
+q  Quit
+```
+
+Pick a book by number, part of its title, or a file path; then convert it or preview its chapters first. **Settings** holds the narrator voice, speed, format, and the books and output folders. They are shown at the top of the menu and apply to every conversion until you change them. Finished audiobooks go to `~/Documents/AudioBook` by default. Press Ctrl-C during an action to return to the menu, or `q` to leave.
+
+Between books the speech server stays loaded, so the second and later conversions start immediately. It shuts down when you quit.
 
 Before generating anything, the app shows the detected chapters and asks you to confirm. It warns you if no chapters were detected (the book is then split into evenly sized sections) or if the PDF looks scanned. Use `--yes` to skip the question.
 
@@ -88,7 +102,7 @@ audiobook-studio "my textbook" --dry-run
 ## Usage
 
 ```bash
-audiobook-studio                       # interactive wizard
+audiobook-studio                       # interactive menu
 audiobook-studio 3                     # book number 3 from the list
 audiobook-studio "digital fund"        # search by title
 audiobook-studio ~/Downloads/book.pdf  # any file path
@@ -142,9 +156,9 @@ The wizard shows ten curated voices. Any Kokoro voice code also works with `-v`,
 ## What it looks like
 
 ```text
-Select a book (1-4, name, path, or 'all'): 3
-Save audiobooks to [~/Documents/AudioBook]: <Enter>
-Choose voice [1-10 or type name] (1): 1
+Choose an option · q to quit (1): 1
+👉 Select a book (1): 3
+What would you like to do? [c/p/s/b] (c): c
 
  Overall Progress   ━━━━━━━━━━━━━━━╸        42% (15/37 Chapters)  0:14:22  0:18:45
  Ch 16: Shift Registers  ━━━━━━━━━━━━━━╸   85% 17/20 Chunks  0:00:32

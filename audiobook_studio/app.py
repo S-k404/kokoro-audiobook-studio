@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import json
+import math
 import os
 import re
 import shutil
@@ -36,6 +37,7 @@ from rich.box import DOUBLE, ROUNDED
 from rich.console import Console, Group
 from rich.layout import Layout
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -403,17 +405,24 @@ def build_books_table(books: List[BookItem]) -> Table:
 
 
 def select_book_interactive(books: List[BookItem], books_dir: Path) -> Optional[BookItem | Path | str]:
-    table = build_books_table(books)
-    console.print(table)
-    console.print("[dim]Options: Enter a book number, search term, custom file path, or 'all' for batch conversion.[/dim]\n")
+    """Ask which book to convert. Returns a BookItem, a Path, 'all', or None if the user backs out."""
+    if books:
+        console.print(build_books_table(books))
+    else:
+        console.print(f"[yellow]No PDF or EPUB files found in {escape(str(books_dir))}.[/yellow]")
+    console.print("[dim]Options: a book number, search term, or file path; 'all' for batch conversion; 'q' to go back.[/dim]\n")
 
+    ask_args = {"default": "1"} if books else {}
     while True:
-        choice = Prompt.ask("[bold green]👉 Select a book[/bold green]", default="1").strip()
+        choice = Prompt.ask("[bold green]👉 Select a book[/bold green]", **ask_args).strip()
         if not choice:
             continue
 
         raw = choice.strip()
         cleaned = raw.strip("'\"").replace("\\ ", " ")
+
+        if cleaned.lower() in ("q", "quit", "b", "back"):
+            return None
 
         if cleaned.lower() in ("all", "batch"):
             return "all"
@@ -423,7 +432,8 @@ def select_book_interactive(books: List[BookItem], books_dir: Path) -> Optional[
             val = int(cleaned)
             if 1 <= val <= len(books):
                 return books[val - 1]
-            console.print(f"[red]Please enter a number between 1 and {len(books)}[/red]")
+            console.print(f"[red]Please enter a number between 1 and {len(books)}[/red]" if books
+                          else "[red]There are no books to pick from; enter a file path or 'q'.[/red]")
             continue
 
         # Check if direct file path
@@ -470,9 +480,11 @@ def select_voice_interactive(current_voice: str) -> str:
         v_table.add_row(str(i), code, cat, desc)
 
     console.print(v_table)
+    codes = [code for code, *_ in VOICE_CATALOG]
+    default = str(codes.index(current_voice) + 1) if current_voice in codes else current_voice
     ans = Prompt.ask(
         "[bold green]Choose voice [1-10 or type name][/bold green]",
-        default="1"
+        default=default
     ).strip()
 
     if ans.isdigit():
@@ -483,23 +495,27 @@ def select_voice_interactive(current_voice: str) -> str:
     return resolve_voice(ans)
 
 
-def select_audio_settings(default_speed: float, default_format: str) -> Tuple[float, str]:
-    speed_ans = Prompt.ask(
-        "[bold green]⏩ Playback Speed factor[/bold green]",
-        default=str(default_speed)
-    ).strip()
-    try:
-        speed = float(speed_ans)
-    except ValueError:
-        speed = 1.0
-    speed = min(max(speed, MIN_SPEED), MAX_SPEED)
+def ask_speed(default_speed: float) -> float:
+    while True:
+        ans = Prompt.ask(
+            "[bold green]⏩ Playback Speed factor[/bold green]",
+            default=f"{default_speed:g}"
+        ).strip()
+        try:
+            speed = float(ans)
+        except ValueError:
+            speed = math.nan
+        if math.isfinite(speed):
+            return min(max(speed, MIN_SPEED), MAX_SPEED)
+        console.print(f"[red]Enter a number between {MIN_SPEED:g} and {MAX_SPEED:g}.[/red]")
 
-    fmt = Prompt.ask(
+
+def ask_format(default_format: str) -> str:
+    return Prompt.ask(
         "[bold green]🎵 Audio Format[/bold green] (m4b with chapter markers, or mp3)",
         choices=["m4b", "mp3"],
         default=default_format
     )
-    return speed, fmt
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +859,211 @@ def synthesize_book_with_dashboard(
 
 
 # ---------------------------------------------------------------------------
+# Batch conversion
+# ---------------------------------------------------------------------------
+def convert_pending(pending: List[BookItem], output_dir: Path, voice: str, speed: float,
+                    audio_format: str, dry_run: bool = False) -> Tuple[int, int]:
+    """Convert each book in turn. Returns (succeeded, failed)."""
+    done = failed = 0
+    for idx, b in enumerate(pending, 1):
+        console.print(f"\n[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
+        console.print(f"[bold]📚 Book [{idx}/{len(pending)}]: {b.title}[/bold]")
+        console.print(f"[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
+        ok = synthesize_book_with_dashboard(
+            book_path=b.path,
+            output_dir=output_dir,
+            voice=voice,
+            speed=speed,
+            audio_format=audio_format,
+            dry_run=dry_run,
+        )
+        if ok:
+            done += 1
+        else:
+            failed += 1
+    console.print(f"\n[bold]Batch finished:[/bold] [green]{done} done[/green]"
+                  + (f", [red]{failed} failed[/red]" if failed else ""))
+    return done, failed
+
+
+# ---------------------------------------------------------------------------
+# Interactive session (main menu)
+# ---------------------------------------------------------------------------
+@dataclass
+class Settings:
+    """Choices that persist across conversions for the length of one interactive session."""
+    books_dir: Path
+    audio_dir: Path
+    voice: str = DEFAULT_VOICE
+    speed: float = DEFAULT_SPEED
+    audio_format: str = DEFAULT_FORMAT
+    dry_run: bool = False
+
+
+def render_status(settings: Settings, library: List[BookItem]):
+    converted = sum(1 for b in library if b.ready_file)
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold cyan")
+    grid.add_column(overflow="fold")
+    grid.add_row("Books", f"{escape(str(settings.books_dir))}  [dim]({len(library)} found, {converted} converted)[/dim]")
+    grid.add_row("Output", escape(str(settings.audio_dir)))
+    grid.add_row(
+        "Narration",
+        f"{settings.voice} · {settings.speed:g}x · {settings.audio_format.upper()}"
+        + ("  [bold yellow]DRY RUN: no audio will be made[/bold yellow]" if settings.dry_run else ""),
+    )
+    console.print(Panel(grid, box=ROUNDED, border_style="bright_blue", title="Current setup", title_align="left"))
+
+
+def render_menu(entries: List[Tuple[str, str]]):
+    menu = Table.grid(padding=(0, 2))
+    menu.add_column(style="bold yellow", justify="right")
+    menu.add_column(overflow="fold")
+    for key, label in entries:
+        menu.add_row(key, label)
+    console.print(menu)
+
+
+def settings_menu(settings: Settings):
+    """Let the user change any setting; returns when they choose Back."""
+    while True:
+        console.print("\n[bold cyan]⚙️  Settings[/bold cyan]")
+        render_menu([
+            ("1", f"Books folder     [dim]{escape(str(settings.books_dir))}[/dim]"),
+            ("2", f"Output folder    [dim]{escape(str(settings.audio_dir))}[/dim]"),
+            ("3", f"Narrator voice   [dim]{settings.voice}[/dim]"),
+            ("4", f"Speed            [dim]{settings.speed:g}x[/dim]"),
+            ("5", f"Audio format     [dim]{settings.audio_format.upper()}[/dim]"),
+            ("6", f"Dry run          [dim]{'on: only analyze chapters' if settings.dry_run else 'off'}[/dim]"),
+            ("b", "Back"),
+        ])
+        choice = Prompt.ask("[bold green]Change which setting?[/bold green]",
+                            choices=["1", "2", "3", "4", "5", "6", "b"], default="b", show_choices=False)
+        if choice == "b":
+            return
+        if choice == "1":
+            ans = Prompt.ask("[bold green]Books folder[/bold green]", default=str(settings.books_dir)).strip()
+            folder = Path(ans.strip("'\"").replace("\\ ", " ")).expanduser().resolve()
+            if folder.is_dir():
+                settings.books_dir = folder
+            else:
+                console.print(f"[red]{escape(str(folder))} is not a folder; keeping the current one.[/red]")
+        elif choice == "2":
+            try:
+                settings.audio_dir = select_output_directory(settings.audio_dir)
+            except OSError as exc:
+                console.print(f"[red]Cannot use that folder: {escape(str(exc))}[/red]")
+        elif choice == "3":
+            settings.voice = select_voice_interactive(settings.voice)
+        elif choice == "4":
+            settings.speed = ask_speed(settings.speed)
+        elif choice == "5":
+            settings.audio_format = ask_format(settings.audio_format)
+        elif choice == "6":
+            settings.dry_run = not settings.dry_run
+
+
+def convert_book_flow(settings: Settings, library: List[BookItem]):
+    selection = select_book_interactive(library, settings.books_dir)
+    if selection is None:
+        return
+    if selection == "all":
+        return convert_all_flow(settings, library)
+    book_path = selection.path if isinstance(selection, BookItem) else selection
+
+    while True:
+        console.print(f"\n[bold]Selected:[/bold] {escape(book_path.name)}")
+        console.print("[dim]c convert · p preview chapters (no audio) · s change settings · b back[/dim]")
+        action = Prompt.ask("[bold green]What would you like to do?[/bold green]",
+                            choices=["c", "p", "s", "b"], default="c", case_sensitive=False)
+        if action == "b":
+            return
+        if action == "s":
+            settings_menu(settings)
+            continue
+        synthesize_book_with_dashboard(
+            book_path=book_path,
+            output_dir=settings.audio_dir,
+            voice=settings.voice,
+            speed=settings.speed,
+            audio_format=settings.audio_format,
+            dry_run=settings.dry_run or action == "p",
+            confirm=True,
+        )
+        if action == "c":
+            return
+
+
+def convert_all_flow(settings: Settings, library: List[BookItem]):
+    pending = [b for b in library if not b.ready_file]
+    if not pending:
+        console.print("[green]Every book in the library already has an audiobook.[/green]")
+        return
+    console.print(f"[bold cyan]{len(pending)} books are waiting to be converted:[/bold cyan]")
+    for b in pending:
+        console.print(f"  • {b.title}")
+    proceed = Confirm.ask(
+        f"[bold green]Convert all {len(pending)}[/bold green] with [cyan]{settings.voice}[/cyan] at "
+        f"[cyan]{settings.speed:g}x[/cyan]? This can take hours",
+        default=False,
+    )
+    if proceed:
+        convert_pending(pending, settings.audio_dir, settings.voice, settings.speed,
+                        settings.audio_format, dry_run=settings.dry_run)
+
+
+def interactive_session(settings: Settings):
+    """Main menu loop. Runs until the user quits; Ctrl-C inside an action returns to the menu."""
+    render_banner()
+    while True:
+        library = scan_books_library(settings.books_dir, settings.audio_dir)
+        pending = [b for b in library if not b.ready_file]
+
+        console.print()
+        render_status(settings, library)
+        render_menu([
+            ("1", "Convert a book"),
+            ("2", f"Convert all pending books [dim]({len(pending)} waiting)[/dim]"),
+            ("3", "Library"),
+            ("4", "Settings"),
+            ("5", "Health check"),
+            ("6", "Download voice model"),
+            ("q", "Quit"),
+        ])
+        try:
+            choice = Prompt.ask("[bold green]Choose an option[/bold green] [dim]· q to quit[/dim]",
+                                choices=["1", "2", "3", "4", "5", "6", "q"], default="1",
+                                show_choices=False, case_sensitive=False)
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            break
+        if choice == "q":
+            break
+
+        try:
+            if choice == "1":
+                convert_book_flow(settings, library)
+            elif choice == "2":
+                convert_all_flow(settings, library)
+            elif choice == "3":
+                if library:
+                    console.print(build_books_table(library))
+                else:
+                    console.print(f"[yellow]No PDF or EPUB files found in {escape(str(settings.books_dir))}.[/yellow]")
+            elif choice == "4":
+                settings_menu(settings)
+            elif choice == "5":
+                run_doctor()
+            elif choice == "6":
+                download_model()
+        except KeyboardInterrupt:
+            console.print("\n[cyan]Cancelled. Back at the main menu.[/cyan]")
+        except EOFError:
+            break
+    console.print("[dim]Goodbye.[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # Main Entry Point
 # ---------------------------------------------------------------------------
 def main():
@@ -902,7 +1123,7 @@ def main():
     selected_speed = min(max(args.speed, MIN_SPEED), MAX_SPEED)
     selected_format = args.format
 
-    # 3. Interactive Wizard (if invoked without arguments)
+    # 3. Resolve the target; with none, open the interactive session
     target_item = None
 
     if args.all:
@@ -927,47 +1148,36 @@ def main():
             if matches:
                 target_item = matches[0]
 
-        # If output was not explicitly set on CLI, ask if interactive
-        if not args.output and sys.stdin.isatty():
-            audio_dir = select_output_directory(audio_dir)
+        if target_item is not None and sys.stdin.isatty():
+            # If output was not explicitly set on CLI, ask
+            if not args.output:
+                audio_dir = select_output_directory(audio_dir)
 
-        # If voice was not specified on CLI, ask if interactive
-        if not args.voice and not args.voice_tag and ":" not in args.target and sys.stdin.isatty():
-            selected_voice = select_voice_interactive(selected_voice)
+            # If voice was not specified on CLI, ask
+            if not args.voice and not args.voice_tag and ":" not in args.target:
+                selected_voice = select_voice_interactive(selected_voice)
 
     if target_item is None:
-        render_banner()
-        selection = select_book_interactive(library, books_dir)
-        if not selection:
-            sys.exit(0)
-        target_item = selection
-
-        # Ask for output directory (baked-in default confirmed on Enter)
-        audio_dir = select_output_directory(audio_dir)
-
-        # Ask for voice if not explicitly provided
-        if not args.voice and not args.voice_tag:
-            selected_voice = select_voice_interactive(selected_voice)
-
-        # Ask for speed & format
-        selected_speed, selected_format = select_audio_settings(selected_speed, selected_format)
+        if args.target:
+            console.print(f"[red]Could not find a book matching '{escape(args.target)}'.[/red]")
+        if not sys.stdin.isatty():
+            console.print("[red]No book selected and no terminal to ask in. Pass a book, or use --list.[/red]")
+            sys.exit(1)
+        interactive_session(Settings(
+            books_dir=books_dir,
+            audio_dir=audio_dir,
+            voice=selected_voice,
+            speed=selected_speed,
+            audio_format=selected_format,
+            dry_run=args.dry_run,
+        ))
+        return
 
     # 5. Process selection
     if target_item == "all":
         pending = [b for b in library if not b.ready_file]
         console.print(f"\n[bold cyan]🚀 Batch Mode: Converting {len(pending)} pending books...[/bold cyan]")
-        for idx, b in enumerate(pending, 1):
-            console.print(f"\n[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
-            console.print(f"[bold]📚 Book [{idx}/{len(pending)}]: {b.title}[/bold]")
-            console.print(f"[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
-            synthesize_book_with_dashboard(
-                book_path=b.path,
-                output_dir=audio_dir,
-                voice=selected_voice,
-                speed=selected_speed,
-                audio_format=selected_format,
-                dry_run=args.dry_run,
-            )
+        convert_pending(pending, audio_dir, selected_voice, selected_speed, selected_format, dry_run=args.dry_run)
     elif isinstance(target_item, BookItem):
         synthesize_book_with_dashboard(
             book_path=target_item.path,
