@@ -23,9 +23,10 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import pymupdf
 try:
@@ -367,6 +368,154 @@ def scan_books_library(books_dir: Path, audio_dir: Path) -> List[BookItem]:
 
 
 # ---------------------------------------------------------------------------
+# Terminal menus (arrow keys)
+# ---------------------------------------------------------------------------
+try:
+    import termios
+    import tty
+except ImportError:  # no POSIX terminal control (e.g. Windows): typed answers are used instead
+    termios = tty = None
+
+_KEY_SEQUENCES = {
+    b"\x1b[A": "up", b"\x1bOA": "up",
+    b"\x1b[B": "down", b"\x1bOB": "down",
+    b"\x1b[H": "home", b"\x1bOH": "home", b"\x1b[1~": "home",
+    b"\x1b[F": "end", b"\x1bOF": "end", b"\x1b[4~": "end",
+    b"\x1b[5~": "pgup", b"\x1b[6~": "pgdn",
+}
+
+
+def arrows_available() -> bool:
+    """Arrow-key menus need a real terminal on both ends; otherwise callers fall back to typed answers."""
+    return (termios is not None and sys.stdin.isatty() and sys.stdout.isatty()
+            and os.environ.get("TERM", "") not in ("", "dumb"))
+
+
+def _decode_key(data: bytes) -> str:
+    if data in _KEY_SEQUENCES:
+        return _KEY_SEQUENCES[data]
+    if data in (b"\r", b"\n"):
+        return "enter"
+    if data == b"\x1b":
+        return "esc"
+    if data == b"\x03":
+        raise KeyboardInterrupt
+    if data == b"\x04":
+        raise EOFError
+    if data.startswith(b"\x1b"):
+        return ""  # an escape sequence we do not use (F-keys, mouse, ...)
+    return data.decode("utf-8", "ignore")[:1]
+
+
+@contextmanager
+def _raw_keys():
+    """Read single keypresses without echo. Ctrl-C still raises KeyboardInterrupt; the terminal is always restored."""
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        yield fd
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def _read_key(fd: int) -> str:
+    data = os.read(fd, 8)
+    if not data:
+        raise EOFError
+    return _decode_key(data)
+
+
+def _select_loop(count: int, start: int, read_key: Callable[[], str], redraw: Callable[[int], None],
+                 shortcuts: Optional[Dict[str, int]] = None, escape: Optional[int] = None, page: int = 10) -> int:
+    """Move a cursor over `count` rows with the keyboard and return the chosen row index."""
+    shortcuts = shortcuts or {}
+    pos = start
+    redraw(pos)
+    while True:
+        key = read_key()
+        if key.lower() in shortcuts:
+            return shortcuts[key.lower()]
+        if key in ("up", "k"):
+            pos = (pos - 1) % count
+        elif key in ("down", "j"):
+            pos = (pos + 1) % count
+        elif key == "home":
+            pos = 0
+        elif key == "end":
+            pos = count - 1
+        elif key == "pgup":
+            pos = max(0, pos - page)
+        elif key == "pgdn":
+            pos = min(count - 1, pos + page)
+        elif key == "enter":
+            return pos
+        elif key == "esc" and escape is not None:
+            return escape
+        else:
+            continue
+        redraw(pos)
+
+
+def render_menu(entries: List[Tuple[str, str]]):
+    menu = Table.grid(padding=(0, 2))
+    menu.add_column(style="bold yellow", justify="right")
+    menu.add_column(overflow="fold")
+    for key, label in entries:
+        menu.add_row(key, label)
+    console.print(menu)
+
+
+def _menu_renderable(title: str, items: List[Tuple[str, str]], pos: int, top: int, page: int,
+                     show_keys: bool, has_escape: bool) -> Group:
+    hint = "↑↓ move · Enter select" + (" · Esc back" if has_escape else "")
+    lines = [Text.from_markup(f"{title}  [dim]{hint}[/dim]")]
+    if top > 0:
+        lines.append(Text("    ↑ more", style="dim"))
+    for i in range(top, min(top + page, len(items))):
+        key, label = items[i]
+        selected = i == pos
+        row = Text("❯ " if selected else "  ", style="bold green")
+        if show_keys:
+            row.append(f"{key:>2}  ", style="bold yellow")
+        row.append_text(Text.from_markup(label, style="bold cyan" if selected else ""))
+        lines.append(row)
+    if top + page < len(items):
+        lines.append(Text("    ↓ more", style="dim"))
+    return Group(*lines)
+
+
+def choose(title: str, items: List[Tuple[str, str]], default: str, escape: Optional[str] = None,
+           show_keys: bool = True, echo: bool = True) -> str:
+    """Pick one of `items` ([(key, label)]) and return its key.
+
+    In a terminal: arrow keys (or j/k) move, Enter selects, and a one-character key jumps straight to its row.
+    Esc picks the `escape` key. Otherwise the menu is printed and the key is typed.
+    """
+    keys = [k for k, _ in items]
+    if arrows_available():
+        page = max(3, min(len(items), console.height - 6))
+        top = 0
+        shortcuts = {k.lower(): i for i, k in enumerate(keys) if len(k) == 1} if show_keys else {}
+        live = Live(console=console, auto_refresh=False, transient=True)
+
+        def redraw(pos: int):
+            nonlocal top
+            top = pos if pos < top else pos - page + 1 if pos >= top + page else top
+            live.update(_menu_renderable(title, items, pos, top, page, show_keys, escape is not None), refresh=True)
+
+        with live, _raw_keys() as fd:
+            index = _select_loop(len(items), keys.index(default), lambda: _read_key(fd), redraw, shortcuts,
+                                 keys.index(escape) if escape is not None else None, page)
+        if echo:
+            console.print(f"[bold green]❯[/bold green] [cyan]{items[index][1]}[/cyan]")
+        return keys[index]
+
+    render_menu(items)
+    return Prompt.ask(title, choices=keys, default=default, show_choices=False, case_sensitive=False)
+
+
+# ---------------------------------------------------------------------------
 # Interactive Wizard
 # ---------------------------------------------------------------------------
 def render_banner():
@@ -406,10 +555,30 @@ def build_books_table(books: List[BookItem]) -> Table:
 
 def select_book_interactive(books: List[BookItem], books_dir: Path) -> Optional[BookItem | Path | str]:
     """Ask which book to convert. Returns a BookItem, a Path, 'all', or None if the user backs out."""
-    if books:
-        console.print(build_books_table(books))
-    else:
+    show_table = True
+    if books and arrows_available():
+        items = [
+            (str(i), f"{i:>3}  {'[cyan]EPUB[/cyan]' if b.is_epub else '[yellow]PDF [/yellow]'} "
+                     f"{escape(b.title[:60])}  [dim]{b.size_mb:.1f} MB[/dim]  {b.audio_status}")
+            for i, b in enumerate(books, 1)
+        ]
+        items += [("search", "🔎 Search, or enter a file path..."),
+                  ("all", "Convert all pending books"),
+                  ("back", "Back")]
+        picked = choose("[bold green]👉 Select a book[/bold green]", items, default="1", escape="back",
+                        show_keys=False, echo=False)
+        if picked == "back":
+            return None
+        if picked == "all":
+            return "all"
+        if picked != "search":
+            return books[int(picked) - 1]
+        show_table = False
+
+    if not books:
         console.print(f"[yellow]No PDF or EPUB files found in {escape(str(books_dir))}.[/yellow]")
+    elif show_table:
+        console.print(build_books_table(books))
     console.print("[dim]Options: a book number, search term, or file path; 'all' for batch conversion; 'q' to go back.[/dim]\n")
 
     ask_args = {"default": "1"} if books else {}
@@ -469,6 +638,19 @@ def select_output_directory(default_dir: Path) -> Path:
 
 
 def select_voice_interactive(current_voice: str) -> str:
+    codes = [code for code, *_ in VOICE_CATALOG]
+    if arrows_available():
+        items = [(code, f"{code:<11} {cat:<16} [dim]{escape(desc)}[/dim]") for code, _, cat, desc in VOICE_CATALOG]
+        if current_voice not in codes:
+            items.insert(0, (current_voice, f"{escape(current_voice)}  [dim](current)[/dim]"))
+        items.append(("", "Type another voice code or name..."))
+        picked = choose("\n[bold cyan]🎙️ Select a narrator voice[/bold cyan]", items,
+                        default=current_voice if current_voice in dict(items) else codes[0], show_keys=False)
+        if picked:
+            return picked
+        ans = Prompt.ask("[bold green]Voice code or name[/bold green]").strip()
+        return resolve_voice(ans) if ans else current_voice
+
     console.print("\n[bold cyan]🎙️ Select a Narrator Voice:[/bold cyan]")
     v_table = Table(box=ROUNDED, border_style="bright_blue", show_header=True, header_style="bold cyan")
     v_table.add_column("#", style="bold yellow", width=3, justify="right")
@@ -480,7 +662,6 @@ def select_voice_interactive(current_voice: str) -> str:
         v_table.add_row(str(i), code, cat, desc)
 
     console.print(v_table)
-    codes = [code for code, *_ in VOICE_CATALOG]
     default = str(codes.index(current_voice) + 1) if current_voice in codes else current_voice
     ans = Prompt.ask(
         "[bold green]Choose voice [1-10 or type name][/bold green]",
@@ -511,10 +692,11 @@ def ask_speed(default_speed: float) -> float:
 
 
 def ask_format(default_format: str) -> str:
-    return Prompt.ask(
-        "[bold green]🎵 Audio Format[/bold green] (m4b with chapter markers, or mp3)",
-        choices=["m4b", "mp3"],
-        default=default_format
+    return choose(
+        "[bold green]🎵 Audio format[/bold green]",
+        [("m4b", "M4B  [dim]one file with chapter markers[/dim]"), ("mp3", "MP3  [dim]one file[/dim]")],
+        default=default_format,
+        show_keys=False,
     )
 
 
@@ -915,20 +1097,11 @@ def render_status(settings: Settings, library: List[BookItem]):
     console.print(Panel(grid, box=ROUNDED, border_style="bright_blue", title="Current setup", title_align="left"))
 
 
-def render_menu(entries: List[Tuple[str, str]]):
-    menu = Table.grid(padding=(0, 2))
-    menu.add_column(style="bold yellow", justify="right")
-    menu.add_column(overflow="fold")
-    for key, label in entries:
-        menu.add_row(key, label)
-    console.print(menu)
-
-
 def settings_menu(settings: Settings):
     """Let the user change any setting; returns when they choose Back."""
     while True:
         console.print("\n[bold cyan]⚙️  Settings[/bold cyan]")
-        render_menu([
+        choice = choose("[bold green]Change which setting?[/bold green]", [
             ("1", f"Books folder     [dim]{escape(str(settings.books_dir))}[/dim]"),
             ("2", f"Output folder    [dim]{escape(str(settings.audio_dir))}[/dim]"),
             ("3", f"Narrator voice   [dim]{settings.voice}[/dim]"),
@@ -936,9 +1109,7 @@ def settings_menu(settings: Settings):
             ("5", f"Audio format     [dim]{settings.audio_format.upper()}[/dim]"),
             ("6", f"Dry run          [dim]{'on: only analyze chapters' if settings.dry_run else 'off'}[/dim]"),
             ("b", "Back"),
-        ])
-        choice = Prompt.ask("[bold green]Change which setting?[/bold green]",
-                            choices=["1", "2", "3", "4", "5", "6", "b"], default="b", show_choices=False)
+        ], default="b", escape="b", echo=False)
         if choice == "b":
             return
         if choice == "1":
@@ -973,9 +1144,12 @@ def convert_book_flow(settings: Settings, library: List[BookItem]):
 
     while True:
         console.print(f"\n[bold]Selected:[/bold] {escape(book_path.name)}")
-        console.print("[dim]c convert · p preview chapters (no audio) · s change settings · b back[/dim]")
-        action = Prompt.ask("[bold green]What would you like to do?[/bold green]",
-                            choices=["c", "p", "s", "b"], default="c", case_sensitive=False)
+        action = choose("[bold green]What would you like to do?[/bold green]", [
+            ("c", "Convert"),
+            ("p", "Preview chapters [dim](no audio)[/dim]"),
+            ("s", "Change settings"),
+            ("b", "Back"),
+        ], default="c", escape="b", echo=False)
         if action == "b":
             return
         if action == "s":
@@ -1021,19 +1195,16 @@ def interactive_session(settings: Settings):
 
         console.print()
         render_status(settings, library)
-        render_menu([
-            ("1", "Convert a book"),
-            ("2", f"Convert all pending books [dim]({len(pending)} waiting)[/dim]"),
-            ("3", "Library"),
-            ("4", "Settings"),
-            ("5", "Health check"),
-            ("6", "Download voice model"),
-            ("q", "Quit"),
-        ])
         try:
-            choice = Prompt.ask("[bold green]Choose an option[/bold green] [dim]· q to quit[/dim]",
-                                choices=["1", "2", "3", "4", "5", "6", "q"], default="1",
-                                show_choices=False, case_sensitive=False)
+            choice = choose("[bold green]Choose an option[/bold green]", [
+                ("1", "Convert a book"),
+                ("2", f"Convert all pending books [dim]({len(pending)} waiting)[/dim]"),
+                ("3", "Library"),
+                ("4", "Settings"),
+                ("5", "Health check"),
+                ("6", "Download voice model"),
+                ("q", "Quit"),
+            ], default="1", escape="q")
         except (KeyboardInterrupt, EOFError):
             console.print()
             break

@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   pending books, browse the library, change settings (books/output folder, voice, speed,
   format, dry run), run the health check, or download the model. The speech server stays
   warm between books and stops when you quit. Ctrl-C inside an action returns to the menu.
+- Arrow-key menus (up/down, Home/End, PgUp/PgDn, j/k, Enter, Esc, or a menu's number/letter to jump),
+  including the book list, voice picker and format picker. Built on the standard library only, so no
+  new dependency; without a terminal (pipes, CI) the same prompts are answered by typing.
 - `-V` / `--version` flag.
 - `run.sh`, a convenience launcher that works whether the project was set up with
   `install.sh`, `uv`, or a local `.venv`.

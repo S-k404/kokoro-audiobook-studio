@@ -174,3 +174,137 @@ def test_main_without_terminal_or_target_exits_instead_of_prompting(tmp_path, mo
     with pytest.raises(SystemExit) as exc:
         app.main()
     assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Arrow-key menus
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("raw, name", [
+    (b"\x1b[A", "up"), (b"\x1bOA", "up"), (b"\x1b[B", "down"), (b"\x1bOB", "down"),
+    (b"\x1b[H", "home"), (b"\x1b[F", "end"), (b"\x1b[5~", "pgup"), (b"\x1b[6~", "pgdn"),
+    (b"\r", "enter"), (b"\n", "enter"), (b"\x1b", "esc"), (b"\x1b[15~", ""), (b"q", "q"), (b"7", "7"),
+])
+def test_decode_key(raw, name):
+    assert app._decode_key(raw) == name
+
+
+def test_decode_key_ctrl_c_and_ctrl_d():
+    with pytest.raises(KeyboardInterrupt):
+        app._decode_key(b"\x03")
+    with pytest.raises(EOFError):
+        app._decode_key(b"\x04")
+
+
+def run_loop(keys, count=4, start=0, shortcuts=None, escape=None, page=10):
+    it = iter(keys)
+    drawn = []
+    result = app._select_loop(count, start, lambda: next(it), drawn.append, shortcuts, escape, page)
+    return result, drawn
+
+
+def test_select_loop_moves_and_wraps():
+    assert run_loop(["down", "down", "enter"])[0] == 2
+    assert run_loop(["up", "enter"])[0] == 3              # up from the first row wraps to the last
+    assert run_loop(["end", "enter"])[0] == 3
+    assert run_loop(["end", "home", "enter"])[0] == 0
+    assert run_loop(["j", "j", "k", "enter"])[0] == 1      # vim keys
+    assert run_loop(["pgdn", "enter"], count=30, page=10)[0] == 10
+    assert run_loop(["pgup", "enter"], count=30, start=4, page=10)[0] == 0
+
+
+def test_select_loop_ignores_unknown_keys_and_redraws_only_on_movement():
+    result, drawn = run_loop(["x", "", "down", "enter"])
+    assert result == 1
+    assert drawn == [0, 1]  # initial draw + one move
+
+
+def test_select_loop_shortcut_and_escape():
+    assert run_loop(["down", "b"], shortcuts={"b": 3})[0] == 3
+    assert run_loop(["esc"], escape=3)[0] == 3
+    it = iter(["esc", "enter"])  # Esc does nothing when the menu has no escape entry
+    assert app._select_loop(4, 2, lambda: next(it), lambda pos: None) == 2
+
+
+def test_choose_in_arrow_mode_returns_the_selected_key(monkeypatch):
+    from contextlib import nullcontext
+    keys = iter(["down", "down", "enter"])
+    monkeypatch.setattr(app, "arrows_available", lambda: True)
+    monkeypatch.setattr(app, "_raw_keys", lambda: nullcontext(0))
+    monkeypatch.setattr(app, "_read_key", lambda fd: next(keys))
+    items = [("a", "Alpha"), ("b", "Beta"), ("c", "Gamma [dim](x)[/dim]")]
+    assert app.choose("Pick", items, default="a") == "c"
+
+
+def test_choose_arrow_mode_shortcuts_default_and_escape(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(app, "arrows_available", lambda: True)
+    monkeypatch.setattr(app, "_raw_keys", lambda: nullcontext(0))
+    items = [("1", "One"), ("2", "Two"), ("q", "Quit")]
+
+    def run(keys, **kw):
+        it = iter(keys)
+        monkeypatch.setattr(app, "_read_key", lambda fd: next(it))
+        return app.choose("Pick", items, **kw)
+
+    assert run(["enter"], default="2") == "2"                    # the cursor starts on the default
+    assert run(["Q"], default="1") == "q"                        # one-character keys jump straight there
+    assert run(["esc"], default="1", escape="q") == "q"
+    assert run(["down", "enter"], default="1", show_keys=False) == "2"
+
+
+def test_choose_shortcuts_are_off_when_keys_are_hidden(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(app, "arrows_available", lambda: True)
+    monkeypatch.setattr(app, "_raw_keys", lambda: nullcontext(0))
+    it = iter(["2", "enter"])  # "2" must not select "2" when keys are not shown; Enter takes the cursor row
+    monkeypatch.setattr(app, "_read_key", lambda fd: next(it))
+    assert app.choose("Pick", [("1", "One"), ("2", "Two")], default="1", show_keys=False) == "1"
+
+
+def test_arrows_unavailable_without_a_terminal(monkeypatch):
+    monkeypatch.setattr(app.sys.stdin, "isatty", lambda: False, raising=False)
+    assert app.arrows_available() is False
+
+
+def test_book_picker_arrow_mode(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(app, "arrows_available", lambda: True)
+    monkeypatch.setattr(app, "_raw_keys", lambda: nullcontext(0))
+    books, audio = tmp_path / "b", tmp_path / "a"
+    books.mkdir()
+    audio.mkdir()
+    (books / "One [draft].epub").write_bytes(b"PK")  # brackets in a title must not be eaten as markup
+    (books / "Two.pdf").write_bytes(b"%PDF")
+    library = app.scan_books_library(books, audio)
+
+    def pick(keys):
+        it = iter(keys)
+        monkeypatch.setattr(app, "_read_key", lambda fd: next(it))
+        return app.select_book_interactive(library, books)
+
+    assert pick(["down", "enter"]).path.name == "Two.pdf"
+    assert pick(["enter"]).path.name == "One [draft].epub"
+    assert pick(["esc"]) is None
+    assert pick(["end", "up", "enter"]) == "all"          # entries: 2 books, search, all, back
+    feed(monkeypatch, ["two"])                             # "Search..." falls through to the typed prompt
+    it = iter(["down", "down", "enter"])
+    monkeypatch.setattr(app, "_read_key", lambda fd: next(it))
+    assert app.select_book_interactive(library, books).path.name == "Two.pdf"
+
+
+def test_voice_picker_arrow_mode(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(app, "arrows_available", lambda: True)
+    monkeypatch.setattr(app, "_raw_keys", lambda: nullcontext(0))
+
+    def pick(keys, current="af_heart", typed=None):
+        it = iter(keys)
+        monkeypatch.setattr(app, "_read_key", lambda fd: next(it))
+        if typed is not None:
+            feed(monkeypatch, [typed])
+        return app.select_voice_interactive(current)
+
+    assert pick(["enter"], current="am_adam") == "am_adam"     # the cursor starts on the current voice
+    assert pick(["down", "enter"]) == "af_bella"
+    assert pick(["end", "enter"], typed="eric") == "am_eric"   # "Type another..." then a name or alias
+    assert pick(["enter"], current="am_echo") == "am_echo"     # a custom current voice stays selectable

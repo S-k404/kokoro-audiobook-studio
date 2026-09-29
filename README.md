@@ -87,7 +87,7 @@ This opens an interactive menu that stays open until you quit:
 q  Quit
 ```
 
-Pick a book by number, part of its title, or a file path; then convert it or preview its chapters first. **Settings** holds the narrator voice, speed, format, and the books and output folders. They are shown at the top of the menu and apply to every conversion until you change them. Finished audiobooks go to `~/Documents/AudioBook` by default. Press Ctrl-C during an action to return to the menu, or `q` to leave.
+Move with the **arrow keys** and press Enter (or press a menu's number or letter to jump straight to it; Esc goes back). The book list also has a search / file-path entry; then convert the book or preview its chapters first. **Settings** holds the narrator voice, speed, format, and the books and output folders. They are shown at the top of the menu and apply to every conversion until you change them. Finished audiobooks go to `~/Documents/AudioBook` by default. Press Ctrl-C during an action to return to the menu, or `q` to leave. When input or output is not a terminal (pipes, CI), the menus fall back to typed answers.
 
 Between books the speech server stays loaded, so the second and later conversions start immediately. It shuts down when you quit.
 
@@ -156,9 +156,15 @@ The wizard shows ten curated voices. Any Kokoro voice code also works with `-v`,
 ## What it looks like
 
 ```text
-Choose an option · q to quit (1): 1
-👉 Select a book (1): 3
-What would you like to do? [c/p/s/b] (c): c
+Choose an option  ↑↓ move · Enter select
+   1  Convert a book
+❯  3  Library
+   4  Settings
+   ...
+
+👉 Select a book  ↑↓ move · Enter select · Esc back
+   1  EPUB Intro to Logic Design  1.2 MB  ⏳ Pending
+❯  3  PDF Digital Fundamentals     9.8 MB  ⏳ Pending
 
  Overall Progress   ━━━━━━━━━━━━━━━╸        42% (15/37 Chapters)  0:14:22  0:18:45
  Ch 16: Shift Registers  ━━━━━━━━━━━━━━╸   85% 17/20 Chunks  0:00:32
