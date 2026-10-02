@@ -127,31 +127,16 @@ audiobook-studio 3 --yes               # skip the confirmation question
 
 ### Voices
 
-The wizard shows ten curated voices. Any Kokoro voice code also works with `-v`, for example `-v am_echo`.
+The wizard shows ten curated voices (`heart`, `bella`, `sky`, `sarah`,
+`nicole`, `adam`, `michael`, `onyx`, `emma`, `george`); any Kokoro voice code
+also works with `-v`. Full voice table and all environment variable settings
+are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-| Code | Alias | Accent / Gender | Character |
-|---|---|---|---|
-| `af_heart` | `heart` | American F | Warm, expressive (default) |
-| `af_bella` | `bella` | American F | Gentle, good for fiction |
-| `af_sky` | `sky` | American F | Bright, energetic |
-| `af_sarah` | `sarah` | American F | Balanced, good for non-fiction |
-| `af_nicole` | `nicole` | American F | Crisp, conversational |
-| `am_adam` | `adam` | American M | Deep, steady narrator |
-| `am_michael` | `michael` | American M | Friendly podcast style |
-| `am_onyx` | `onyx` | American M | Deep baritone |
-| `bf_emma` | `emma` | British F | Polished British narrator |
-| `bm_george` | `george` | British M | Distinguished British narrator |
+## Documentation
 
-### Settings (environment variables)
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `BOOKS_DIR` | `~/Documents/Books` | Where your PDFs and EPUBs are |
-| `AUDIO_DIR` | `~/Documents/AudioBook` | Where audiobooks are written |
-| `KOKORO_PORT` | `8001` | Port for the local speech server |
-| `KOKORO_HOST` | `127.0.0.1` | Address the server listens on |
-| `KOKORO_ENDPOINT` | `http://127.0.0.1:8001/v1` | Use an already running or remote Kokoro server instead |
-| `KOKORO_STUDIO_HOME` | `~/.kokoro-audiobook-studio` | Server log and state files |
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — full voice list and environment variable reference
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — expanded fixes for install, server, and book-content issues
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — project layout and how a book turns into an audiobook
 
 ## What it looks like
 
@@ -176,14 +161,16 @@ Choose an option  ↑↓ move · Enter select
 
 ## Troubleshooting
 
-**`No matching distribution found for kokoro` or `requires a different Python`**
-You are using Python 3.13 or newer. Install 3.12 (`brew install python@3.12`) and re-run `./install.sh`, which picks a supported version automatically.
+Run the self-check first — it covers most issues in one command:
 
-**First, run the self-check**
 ```bash
 audiobook-studio --doctor
 ```
-It lists what works and what does not (Python, ffmpeg, GPU, speech engine, voice model, output folder, port) and says how to fix each problem.
+
+Two of the most common problems:
+
+**`No matching distribution found for kokoro` or `requires a different Python`**
+You are using Python 3.13 or newer. Install 3.12 (`brew install python@3.12`) and re-run `./install.sh`, which picks a supported version automatically.
 
 **`command not found: audiobook-studio`**
 `~/.local/bin` is not on your PATH. Run this, then open a new terminal:
@@ -191,47 +178,8 @@ It lists what works and what does not (Python, ffmpeg, GPU, speech engine, voice
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
-**`ffmpeg` or `ffprobe` not found**
-```bash
-brew install ffmpeg
-```
-
-**"Server failed to start"**
-Look at the log for the real reason:
-```bash
-tail -50 ~/.kokoro-audiobook-studio/server.log
-```
-The first start downloads the model and can take a few minutes on a slow connection. If the download was interrupted, run the command again.
-
-**Port 8001 is already in use**
-If another Kokoro server is already running there, the app will simply use it. If it is something else, choose another port:
-```bash
-KOKORO_PORT=8011 KOKORO_ENDPOINT=http://127.0.0.1:8011/v1 audiobook-studio
-```
-
-**Log says `Error processing file ... espeak-ng-data/phontab`**
-The environment is installed in a folder with a very long path (the speech engine's data folder must be under about 130 characters deep). Reinstall in a shorter location, for example `~/.kokoro-audiobook-studio` (what `install.sh` uses).
-
-**The first conversion seems stuck**
-The voice model (~330 MB) is downloaded the first time it is needed. Run `audiobook-studio --download-model` to fetch it with visible progress, and check your internet connection or proxy. Partial downloads resume.
-
-**Installation fails with network or pip errors**
-Check your internet connection, VPN or proxy (`HTTPS_PROXY`), and that you have about 4 GB free. The installer offers to retry without the pinned versions; only accept that if the pinned install fails, since newer versions are untested.
-
-**"No readable text found"**
-The PDF is probably scanned images. Run it through an OCR tool first (for example `ocrmypdf`), then convert the result.
-
-**"Document is password protected"**
-Remove the password from the PDF first.
-
-**"Aborted, no audiobook written ... chunks could not be synthesized"**
-The speech server failed part-way through a chapter. The app stops rather than produce an audiobook with silent gaps. Check `server.log` (path shown in the message), free up memory, and run again. If you hit Metal errors, try `PYTORCH_ENABLE_MPS_FALLBACK=1 audiobook-studio`.
-
-**It is slow**
-On an Intel Mac or Linux there is no Metal GPU, so synthesis runs on the CPU (or CUDA if available). Apple Silicon is where this project is fast.
-
-**Chapter names look wrong, or there are too few chapters**
-Run with `--dry-run` to preview the detected chapters (the app also shows them and asks before it starts). PDFs without an outline or clear headings fall back to evenly sized sections; adding bookmarks to the PDF, or converting from an EPUB, gives better chapters.
+For server issues, book-content issues (scanned PDFs, bad chapters), and
+everything else, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Optional: double-clickable launcher
 
@@ -260,15 +208,6 @@ Measured by the author on an Apple Silicon Mac. Your numbers will vary with chip
 * Everything runs locally. The only network access is the one-time model download from Hugging Face.
 * The speech server listens on `127.0.0.1` only and has no authentication. Do not expose it to a network. If you set `KOKORO_HOST=0.0.0.0`, anyone on that network can use your GPU.
 * PDFs and EPUBs are parsed by third-party libraries. As with any document tool, only open files you trust and keep dependencies up to date.
-
-## Project layout
-
-```
-audiobook_studio/
-  app.py         terminal interface, live dashboard, M4B packaging
-  server.py      local Kokoro speech server (OpenAI-style /v1/audio/speech)
-  converter.py   PDF text extraction, cleanup, chapter detection, EPUB writing
-```
 
 ## Legal
 
