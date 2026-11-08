@@ -1,3 +1,12 @@
+<!-- datasheet:banner -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+    <img src=".github/assets/banner-light.svg" alt="Kokoro Audiobook Studio: Turn textbooks and technical PDFs into chaptered M4B audiobooks, entirely on your Mac. No cloud, no per-character fees." width="100%">
+  </picture>
+</p>
+<!-- /datasheet:banner -->
+
 # Kokoro Audiobook Studio
 
 [![CI](https://github.com/S-k404/kokoro-audiobook-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/S-k404/kokoro-audiobook-studio/actions/workflows/ci.yml)
@@ -10,6 +19,17 @@
 A terminal app that reads a PDF or EPUB, strips the running headers, footers, page numbers and footnote noise that make PDFs painful to listen to, and narrates it with the open-source [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) voice model on the Apple Silicon GPU. The result is a single `.m4b` file with real chapter markers for Apple Books, VLC, or any audiobook player.
 
 Nothing leaves your machine after the one-time model download: no cloud API, no per-character fees, no account.
+
+<!-- datasheet:figure -->
+## At a glance
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagram-dark.svg">
+    <img src=".github/assets/diagram-light.svg" alt="Block diagram: PDF to audiobook signal path" width="100%">
+  </picture>
+</p>
+<!-- /datasheet:figure -->
 
 ## Why this exists
 
