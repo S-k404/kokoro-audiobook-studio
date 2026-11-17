@@ -18,7 +18,7 @@
 
 A terminal app that reads a PDF or EPUB, strips the running headers, footers, page numbers and footnote noise that make PDFs painful to listen to, and narrates it with the open-source [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) voice model on the Apple Silicon GPU. The result is a single `.m4b` file with real chapter markers for Apple Books, VLC, or any audiobook player.
 
-Nothing leaves your machine after the one-time model download: no cloud API, no per-character fees, no account.
+Nothing leaves your machine after the one-time model download: no cloud API, no per-character fees, no account. Think of it as a signal chain: a PDF goes in one end, a `.m4b` with real chapter marks comes out the other, and nobody ever announces "Page 214".
 
 <!-- datasheet:figure -->
 ## At a glance
@@ -29,9 +29,25 @@ Nothing leaves your machine after the one-time model download: no cloud API, no 
     <img src=".github/assets/diagram-light.svg" alt="Block diagram: PDF to audiobook signal path" width="100%">
   </picture>
 </p>
+
+| Characteristic | Detail |
+| --- | --- |
+| **Run** | `audiobook-studio` opens a menu; `audiobook-studio 3 bella` converts book 3 in the voice `bella` |
+| **In and out** | A PDF or EPUB in; one `.m4b` (or `.mp3`) with chapter marks out, plus a clean `.epub` |
+| **Engine** | Kokoro-82M on the Apple GPU through PyTorch MPS, about 14 to 16 times real time |
+| **Requires** | Apple Silicon Mac, Python 3.10 to 3.12, ffmpeg, about 2 GB for PyTorch and a ~330 MB voice model |
+| **Privacy** | Fully local; the only network use is the one-time model download |
 <!-- /datasheet:figure -->
 
-## Why this exists
+## Quick start
+
+```bash
+git clone https://github.com/S-k404/kokoro-audiobook-studio.git
+cd kokoro-audiobook-studio && ./install.sh     # asks before changing anything
+audiobook-studio                               # opens the menu; books live in ~/Documents/Books
+```
+
+## Features
 
 Most text-to-speech tools read a PDF exactly as printed, so you hear "Page 214" and the chapter title again every few minutes. This one is built for long, structured, non-fiction books such as textbooks, manuals and lecture notes:
 
@@ -39,6 +55,31 @@ Most text-to-speech tools read a PDF exactly as printed, so you hear "Page 214" 
 * **Real chapters.** Chapter boundaries come from the book's outline (or its headings) and are written into the `.m4b`, so you can skip and resume by chapter.
 * **Runs on the Apple GPU.** PyTorch's Metal (MPS) backend generates audio many times faster than real time on M-series Macs.
 * **No background process.** The speech server starts when you convert a book and shuts down when you are done.
+* **Look before you leap.** `--dry-run` (or **p** in the book list) shows the detected chapters, the word count and the estimated length without generating any audio.
+* **A menu, not a manual.** Arrow keys and Enter for everything: convert one book, convert all pending ones, browse the library, change the voice, speed and folders, download the model, run the health check.
+* **M4B or MP3.** Chaptered `.m4b` by default; `-f mp3` for players that ignore chapters.
+* **A self-check.** `audiobook-studio --doctor` tests every requirement and says what to fix.
+
+## What it looks like
+
+```text
+Choose an option  ↑↓ move · Enter select
+   1  Convert a book
+❯  3  Library
+   4  Settings
+   ...
+
+👉 Select a book  ↑↓ move · Enter select · Esc back
+   1  EPUB Intro to Logic Design  1.2 MB  ⏳ Pending
+❯  3  PDF Digital Fundamentals     9.8 MB  ⏳ Pending
+
+ Overall Progress   ━━━━━━━━━━━━━━━╸        42% (15/37 Chapters)  0:14:22  0:18:45
+ Ch 16: Shift Registers  ━━━━━━━━━━━━━━╸   85% 17/20 Chunks  0:00:32
+
+ Ch #  Chapter Title              Duration    Size   Status
+   14  Serial-In Parallel-Out      8.1 min    6.5 MB  Done
+   15  Universal Shift Register   15.0 min   11.8 MB  Done
+```
 
 ## Requirements
 
@@ -87,9 +128,9 @@ audiobook-studio --doctor         # verify the setup
 
 Keep your environment in a **short folder path**: the speech engine fails to start when its data folder is more than about 130 characters deep (see Troubleshooting).
 
-## Quick start
+## First run
 
-Put your books in `~/Documents/Books` (or pass any path), then run:
+Put your books in `~/Documents/Books` (or pass any path, or use `--books-dir`), then run:
 
 ```bash
 audiobook-studio
@@ -107,7 +148,7 @@ This opens an interactive menu that stays open until you quit:
 q  Quit
 ```
 
-Move with the **arrow keys** and press Enter (or press a menu's number or letter to jump straight to it; Esc goes back). The book list also has a search / file-path entry; then convert the book or preview its chapters first. **Settings** holds the narrator voice, speed, format, and the books and output folders. They are shown at the top of the menu and apply to every conversion until you change them. Finished audiobooks go to `~/Documents/AudioBook` by default. Press Ctrl-C during an action to return to the menu, or `q` to leave. When input or output is not a terminal (pipes, CI), the menus fall back to typed answers.
+Move with the **arrow keys** and press Enter (or press a menu's number or letter to jump straight to it; Esc goes back). The book list also has a search / file-path entry; then convert the book or preview its chapters first. **Settings** holds the narrator voice, speed, format, the books and output folders, and a **Dry run** switch that only analyses chapters. They are shown at the top of the menu and apply to every conversion in that session; they are not saved between runs (set `BOOKS_DIR` and `AUDIO_DIR`, or pass flags, for lasting defaults). Finished audiobooks go to `~/Documents/AudioBook` by default. Press Ctrl-C during an action to return to the menu, or `q` to leave. When input or output is not a terminal (pipes, CI), the menus fall back to typed answers.
 
 Between books the speech server stays loaded, so the second and later conversions start immediately. It shuts down when you quit.
 
@@ -119,6 +160,19 @@ Try a dry run first to see how a book will be split into chapters, without gener
 audiobook-studio "my textbook" --dry-run
 ```
 
+## Typical application
+
+```bash
+# 1. Check how a textbook will be split before spending an evening on it
+audiobook-studio "my textbook" --dry-run
+
+# 2. Queue everything overnight, slightly faster, no questions asked
+audiobook-studio --all --yes -s 1.1
+
+# 3. One book as MP3 for a player that ignores chapters, into a folder of your choice
+audiobook-studio 3 -f mp3 -o ~/Audio
+```
+
 ## Usage
 
 ```bash
@@ -128,6 +182,7 @@ audiobook-studio "digital fund"        # search by title
 audiobook-studio ~/Downloads/book.pdf  # any file path
 audiobook-studio 3 bella               # pick a voice
 audiobook-studio 3:george              # same thing, colon style
+audiobook-studio 3 -v af_bella         # any Kokoro voice code works with -v
 audiobook-studio 3 -s 1.1 -f mp3       # speed 1.1x, MP3 instead of M4B
 audiobook-studio 3 -o ~/Audio          # custom output folder
 audiobook-studio --all                 # convert every book not yet converted
@@ -135,10 +190,12 @@ audiobook-studio --list                # show your library
 audiobook-studio --voices              # show the voice list
 audiobook-studio --doctor              # check that everything needed works
 audiobook-studio --download-model      # download the voice model now
+audiobook-studio --books-dir ~/Lectures --list   # look for books somewhere else
+audiobook-studio -V                    # print the version
 audiobook-studio 3 --yes               # skip the confirmation question
 ```
 
-`make_audiobook` is an alias for `audiobook-studio`.
+`make_audiobook` is an alias for `audiobook-studio`. From a checkout, `./run.sh` takes the same arguments: it uses the checkout's `.venv` if there is one, otherwise `uv`, otherwise the installed copy.
 
 ### How each format is handled
 
@@ -147,7 +204,7 @@ audiobook-studio 3 --yes               # skip the confirmation question
 
 ### Voices
 
-The wizard shows ten curated voices (`heart`, `bella`, `sky`, `sarah`,
+The menu shows ten curated voices (`heart`, `bella`, `sky`, `sarah`,
 `nicole`, `adam`, `michael`, `onyx`, `emma`, `george`); any Kokoro voice code
 also works with `-v`. Full voice table and all environment variable settings
 are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -157,27 +214,6 @@ are in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — full voice list and environment variable reference
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — expanded fixes for install, server, and book-content issues
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — project layout and how a book turns into an audiobook
-
-## What it looks like
-
-```text
-Choose an option  ↑↓ move · Enter select
-   1  Convert a book
-❯  3  Library
-   4  Settings
-   ...
-
-👉 Select a book  ↑↓ move · Enter select · Esc back
-   1  EPUB Intro to Logic Design  1.2 MB  ⏳ Pending
-❯  3  PDF Digital Fundamentals     9.8 MB  ⏳ Pending
-
- Overall Progress   ━━━━━━━━━━━━━━━╸        42% (15/37 Chapters)  0:14:22  0:18:45
- Ch 16: Shift Registers  ━━━━━━━━━━━━━━╸   85% 17/20 Chunks  0:00:32
-
- Ch #  Chapter Title              Duration    Size   Status
-   14  Serial-In Parallel-Out      8.1 min    6.5 MB  Done
-   15  Universal Shift Register   15.0 min   11.8 MB  Done
-```
 
 ## Troubleshooting
 
@@ -223,6 +259,25 @@ Measured by the author on an Apple Silicon Mac. Your numbers will vary with chip
 | Additive Manufacturing, 14 chapters | 8.0 h | ~32 min | ~15x real time |
 | Python Illustrated, 18 chapters | 9.0 h | ~38 min | ~14x real time |
 
+## Absolute maximum ratings
+
+| Parameter | Limit |
+|---|---|
+| Python | 3.10 to 3.12; 3.13 and newer is not supported by Kokoro yet |
+| Speech speed (`-s`) | 0.25x to 4x; the server rejects values outside that range |
+| Text per speech request | 20,000 characters (`KOKORO_MAX_INPUT_CHARS` raises or lowers it) |
+| Folder depth of the install | about 130 characters, or the speech engine fails to start |
+| Disk and download | about 2 GB for PyTorch, plus a ~330 MB voice model on first use |
+| Speed on Apple Silicon | about 14 to 16 times real time (measured, see above) |
+| Page numbers read aloud | 0 |
+
+## Errata
+
+* Settings in the menu last for one session only; they are not written to disk.
+* Scanned PDFs (pictures of pages) have no text layer and need OCR before conversion.
+* Linux and Intel Macs run on CPU or CUDA, are much slower, and are untested.
+* `python -m audiobook_studio.converter` is an older standalone command line with extra options (`--pages`, `--skip-front`, `--dump-text`). It expects a speech server on port 8000, not 8001, and `audiobook-studio` is the supported way in.
+
 ## Security and privacy
 
 * Everything runs locally. The only network access is the one-time model download from Hugging Face.
@@ -240,3 +295,12 @@ Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md
 ## License
 
 MIT. Copyright (c) 2026 SK.
+
+<!-- datasheet:footer -->
+---
+
+<p align="center">
+  <a href="https://github.com/S-k404/S-k404">SK-404 index</a> &middot;
+  <a href="https://github.com/S-k404/notion-better-export">U2 notion-better-export &rarr;</a>
+</p>
+<!-- /datasheet:footer -->

@@ -48,3 +48,7 @@ audiobook_studio_*/
 *.wav
 *.pdf
 *.epub
+
+# Local AI session notes (kept on disk, not published)
+CLAUDE.md
+WORKLOG.md
