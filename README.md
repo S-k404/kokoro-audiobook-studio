@@ -276,7 +276,6 @@ Measured by the author on an Apple Silicon Mac. Your numbers will vary with chip
 * Settings in the menu last for one session only; they are not written to disk.
 * Scanned PDFs (pictures of pages) have no text layer and need OCR before conversion.
 * Linux and Intel Macs run on CPU or CUDA, are much slower, and are untested.
-* `python -m audiobook_studio.converter` is an older standalone command line with extra options (`--pages`, `--skip-front`, `--dump-text`). It expects a speech server on port 8000, not 8001, and `audiobook-studio` is the supported way in.
 
 ## Security and privacy
 
