@@ -244,7 +244,11 @@ def run_doctor() -> bool:
 
     for tool in ("ffmpeg", "ffprobe"):
         path = shutil.which(tool)
-        add(tool, "ok" if path else "fail", path or "not found (macOS: brew install ffmpeg | Debian/Ubuntu: sudo apt install ffmpeg)")
+        add(
+            tool,
+            "ok" if path else "fail",
+            path or "not found (macOS: brew install ffmpeg | Windows: winget install Gyan.FFmpeg | Linux: sudo apt install ffmpeg)",
+        )
 
     try:
         import torch
@@ -384,11 +388,34 @@ _KEY_SEQUENCES = {
     b"\x1b[5~": "pgup", b"\x1b[6~": "pgdn",
 }
 
+_WIN_EXT_MAP = {
+    "H": "up", "P": "down", "G": "home", "O": "end", "I": "pgup", "Q": "pgdn",
+}
+
+
+def _enable_win_vt() -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleOutputCP(65001)
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+
 
 def arrows_available() -> bool:
     """Arrow-key menus need a real terminal on both ends; otherwise callers fall back to typed answers."""
-    return (termios is not None and sys.stdin.isatty() and sys.stdout.isatty()
-            and os.environ.get("TERM", "") not in ("", "dumb"))
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    if sys.platform.startswith("win"):
+        return True
+    return termios is not None and os.environ.get("TERM", "") not in ("", "dumb")
 
 
 def _decode_key(data: bytes) -> str:
@@ -407,9 +434,27 @@ def _decode_key(data: bytes) -> str:
     return data.decode("utf-8", "ignore")[:1]
 
 
+def _decode_win_key(ms_mod) -> str:
+    ch = ms_mod.getwch()
+    if ch in ("\x00", "\xe0"):
+        ext = ms_mod.getwch()
+        return _WIN_EXT_MAP.get(ext, "")
+    if ch in ("\r", "\n"):
+        return "enter"
+    if ch == "\x1b":
+        return "esc"
+    if ch == "\x03":
+        raise KeyboardInterrupt
+    return ch[:1]
+
+
 @contextmanager
 def _raw_keys():
     """Read single keypresses without echo. Ctrl-C still raises KeyboardInterrupt; the terminal is always restored."""
+    if sys.platform.startswith("win"):
+        _enable_win_vt()
+        yield None
+        return
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     try:
@@ -419,7 +464,11 @@ def _raw_keys():
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
-def _read_key(fd: int) -> str:
+def _read_key(fd: Optional[int]) -> str:
+    if fd is None:
+        import msvcrt
+
+        return _decode_win_key(msvcrt)
     data = os.read(fd, 8)
     if not data:
         raise EOFError

@@ -275,11 +275,15 @@ def _synthesize_stream(
 # API Routes
 # ---------------------------------------------------------------------------
 
+def _backend_name(device: str) -> str:
+    return {"mps": "pytorch-metal-mps", "cuda": "pytorch-cuda"}.get(device, "pytorch-cpu")
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse({
         "status": "ok",
-        "backend": "pytorch-metal-mps",
+        "backend": _backend_name(_device),
         "device": _device,
     })
 

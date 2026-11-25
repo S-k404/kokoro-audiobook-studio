@@ -12,7 +12,7 @@
 [![CI](https://github.com/S-k404/kokoro-audiobook-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/S-k404/kokoro-audiobook-studio/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](pyproject.toml)
-[![Platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg)](#requirements)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%2011%20%7C%20Linux-lightgrey.svg)](#requirements)
 
 **Turn textbooks and technical PDFs into chaptered audiobooks, entirely on your Mac.**
 
@@ -34,17 +34,28 @@ Nothing leaves your machine after the one-time model download: no cloud API, no 
 | --- | --- |
 | **Run** | `audiobook-studio` opens a menu; `audiobook-studio 3 bella` converts book 3 in the voice `bella` |
 | **In and out** | A PDF or EPUB in; one `.m4b` (or `.mp3`) with chapter marks out, plus a clean `.epub` |
-| **Engine** | Kokoro-82M on the Apple GPU through PyTorch MPS, about 14 to 16 times real time |
-| **Requires** | Apple Silicon Mac, Python 3.10 to 3.12, ffmpeg, about 2 GB for PyTorch and a ~330 MB voice model |
+| **Engine** | Kokoro-82M on PyTorch (`MPS` on Apple Silicon, `CUDA` on NVIDIA Windows/Linux, or `CPU` fallback) |
+| **Requires** | macOS, Windows 11, or Linux; Python 3.10 to 3.12; ffmpeg; ~2 GB for PyTorch and ~330 MB model |
 | **Privacy** | Fully local; the only network use is the one-time model download |
 <!-- /datasheet:figure -->
 
 ## Quick start
 
+macOS / Linux:
+
 ```bash
 git clone https://github.com/S-k404/kokoro-audiobook-studio.git
 cd kokoro-audiobook-studio && ./install.sh     # asks before changing anything
 audiobook-studio                               # opens the menu; books live in ~/Documents/Books
+```
+
+Windows 11 (PowerShell / Windows Terminal):
+
+```powershell
+git clone https://github.com/S-k404/kokoro-audiobook-studio.git
+cd kokoro-audiobook-studio
+.\install.ps1                                  # checks Python 3.10-3.12, ffmpeg, installs .venv
+.\run.ps1                                      # opens interactive studio menu
 ```
 
 ## Features
