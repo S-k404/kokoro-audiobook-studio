@@ -14,9 +14,9 @@
 [![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](pyproject.toml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%2011%20%7C%20Linux-lightgrey.svg)](#requirements)
 
-**Turn textbooks and technical PDFs into chaptered audiobooks, entirely on your Mac.**
+**Turn textbooks and technical PDFs into chaptered audiobooks, entirely on your machine.**
 
-A terminal app that reads a PDF or EPUB, strips the running headers, footers, page numbers and footnote noise that make PDFs painful to listen to, and narrates it with the open-source [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) voice model on the Apple Silicon GPU. The result is a single `.m4b` file with real chapter markers for Apple Books, VLC, or any audiobook player.
+A terminal app that reads a PDF or EPUB, strips the running headers, footers, page numbers and footnote noise that make PDFs painful to listen to, and narrates it with the open-source [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) voice model on Apple Silicon GPU (Metal MPS), NVIDIA GPU (CUDA), or CPU. The result is a single `.m4b` file with real chapter markers for Apple Books, VLC, or any audiobook player.
 
 Nothing leaves your machine after the one-time model download: no cloud API, no per-character fees, no account. Think of it as a signal chain: a PDF goes in one end, a `.m4b` with real chapter marks comes out the other, and nobody ever announces "Page 214".
 
@@ -64,7 +64,7 @@ Most text-to-speech tools read a PDF exactly as printed, so you hear "Page 214" 
 
 * **PDF cleanup first.** Running headers and footers, page numbers and citation markers are removed before narration. The cleaned text is also saved as an `.epub` you can keep.
 * **Real chapters.** Chapter boundaries come from the book's outline (or its headings) and are written into the `.m4b`, so you can skip and resume by chapter.
-* **Runs on the Apple GPU.** PyTorch's Metal (MPS) backend generates audio many times faster than real time on M-series Macs.
+* **Runs on Apple and NVIDIA GPUs.** PyTorch's Metal (MPS) backend generates audio many times faster than real time on M-series Macs, with full CUDA acceleration on Windows 11 / Linux (and CPU fallback).
 * **No background process.** The speech server starts when you convert a book and shuts down when you are done.
 * **Look before you leap.** `--dry-run` (or **p** in the book list) shows the detected chapters, the word count and the estimated length without generating any audio.
 * **A menu, not a manual.** Arrow keys and Enter for everything: convert one book, convert all pending ones, browse the library, change the voice, speed and folders, download the model, run the health check.
@@ -96,9 +96,9 @@ Choose an option  ↑↓ move · Enter select
 
 | | |
 |---|---|
-| Computer | Mac with Apple Silicon (M1 or newer) recommended. Linux runs on CPU/CUDA and Intel Macs are untested; both are much slower and treated as experimental. |
+| Computer | Mac with Apple Silicon (M1 or newer) or Windows 11 PC (NVIDIA CUDA GPU or modern CPU). Linux runs on CPU/CUDA; Intel Macs are untested. |
 | Python | **3.10, 3.11 or 3.12.** Python 3.13+ is not supported by Kokoro yet. |
-| ffmpeg | Needed to build the `.m4b`. The installer can install it for you (Homebrew on macOS, apt on Debian/Ubuntu). |
+| ffmpeg | Needed to build the `.m4b`. The installer can install it for you (Homebrew on macOS, winget on Windows 11, apt on Debian/Ubuntu). |
 | Disk / network | About 2 GB for PyTorch, plus a ~330 MB voice model downloaded from Hugging Face the first time you convert a book. |
 
 You do not have to prepare any of this by hand: the installer checks each requirement, tells you what is missing, and asks before installing anything.
@@ -107,24 +107,36 @@ You do not have to prepare any of this by hand: the installer checks each requir
 
 ### Option 1: install script (recommended)
 
+**macOS / Linux:**
+
 ```bash
 git clone https://github.com/S-k404/kokoro-audiobook-studio.git
 cd kokoro-audiobook-studio
 ./install.sh
 ```
 
+**Windows 11 (PowerShell):**
+
+```powershell
+git clone https://github.com/S-k404/kokoro-audiobook-studio.git
+cd kokoro-audiobook-studio
+.\install.ps1
+```
+
 The installer checks your system and **asks before changing anything**:
 
-* finds Python 3.10-3.12 and ffmpeg, and offers to install them if they are missing (with Homebrew on macOS, or apt on Debian/Ubuntu; it can also offer to install Homebrew itself, only if you say yes)
-* warns you on Intel Macs and Linux, and when disk space is low, the internet is unreachable, or the install folder path is too long
-* installs into its own environment at `~/.kokoro-audiobook-studio` using tested version pins from `constraints.txt`, so it does not touch your other Python projects
-* adds `audiobook-studio` to `~/.local/bin` without overwriting any command that already exists there
+* finds Python 3.10-3.12 and ffmpeg, and offers to install them if they are missing (with Homebrew on macOS, `winget` on Windows 11, or apt on Debian/Ubuntu; it can also offer to install Homebrew itself on macOS, only if you say yes)
+* warns you on Intel Macs and when disk space is low, the internet is unreachable, or the install folder path is too long
+* installs into its own environment (`~/.kokoro-audiobook-studio` on macOS/Linux, `.venv` on Windows) using tested version pins from `constraints.txt`, so it does not touch your other Python projects
+* adds `audiobook-studio` to `~/.local/bin` (and `audiobook-studio.cmd` on Windows) without overwriting any command that already exists there
 * offers to download the ~330 MB voice model right away, so your first conversion does not stall
 * finishes with a self-check (`audiobook-studio --doctor`) that shows exactly what works
 
-Use `./install.sh --yes` to accept the default answers without prompts. If a step fails, the installer stops with a message saying what to do; see Troubleshooting.
+On macOS/Linux, use `./install.sh --yes` to accept the default answers without prompts. If a step fails, the installer stops with a message saying what to do; see Troubleshooting.
 
 ### Option 2: manual install
+
+**macOS / Linux:**
 
 ```bash
 brew install ffmpeg
@@ -132,6 +144,19 @@ git clone https://github.com/S-k404/kokoro-audiobook-studio.git
 cd kokoro-audiobook-studio
 python3.12 -m venv .venv          # any of 3.10, 3.11, 3.12
 source .venv/bin/activate
+pip install -c constraints.txt .
+audiobook-studio --download-model # optional: fetch the voice model now (~330 MB)
+audiobook-studio --doctor         # verify the setup
+```
+
+**Windows 11 (PowerShell):**
+
+```powershell
+winget install Gyan.FFmpeg Python.Python.3.12
+git clone https://github.com/S-k404/kokoro-audiobook-studio.git
+cd kokoro-audiobook-studio
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -c constraints.txt .
 audiobook-studio --download-model # optional: fetch the voice model now (~330 MB)
 audiobook-studio --doctor         # verify the setup
@@ -237,18 +262,28 @@ audiobook-studio --doctor
 Two of the most common problems:
 
 **`No matching distribution found for kokoro` or `requires a different Python`**
-You are using Python 3.13 or newer. Install 3.12 (`brew install python@3.12`) and re-run `./install.sh`, which picks a supported version automatically.
+You are using Python 3.13 or newer. Install 3.12 (`brew install python@3.12` on macOS, `winget install Python.Python.3.12` on Windows) and re-run `./install.sh` or `.\install.ps1`, which picks a supported version automatically.
 
 **`command not found: audiobook-studio`**
-`~/.local/bin` is not on your PATH. Run this, then open a new terminal:
+`~/.local/bin` is not on your PATH.
+
+On macOS / Linux:
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
+On Windows (PowerShell):
+```powershell
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$HOME\.local\bin", "User")
+```
+Or run directly from the repository folder with `.\run.ps1`.
+
 For server issues, book-content issues (scanned PDFs, bad chapters), and
 everything else, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
-## Optional: double-clickable launcher
+## Optional: double-clickable launcher / shortcut
+
+**macOS:**
 
 ```bash
 osacompile -o "/Applications/Audiobook Studio.app" -e '
@@ -257,6 +292,9 @@ tell application "Terminal"
     do script "audiobook-studio"
 end tell'
 ```
+
+**Windows 11:**
+Create a shortcut pointing to PowerShell running `run.ps1`, or right-click `run.ps1` → **Run with PowerShell**.
 
 If the app cannot find the command, use the full path (`$HOME/.local/bin/audiobook-studio`) in the script.
 
